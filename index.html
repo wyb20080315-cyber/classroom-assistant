@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>课堂助手 | Classroom Assistant</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="setup-overlay" class="overlay hidden">
+    <div class="setup-modal">
+      <h1>🎓 课堂助手</h1>
+      <p class="setup-desc">首次使用请配置你的大模型 API，所有信息仅保存在你的浏览器本地。</p>
+      <form id="setup-form">
+        <div class="form-group">
+          <label for="api-base-url">API Base URL</label>
+          <input type="url" id="api-base-url" placeholder="https://你的中转站地址/v1" required>
+          <small>例如：https://api.openai.com/v1 或你的中转站地址</small>
+        </div>
+        <div class="form-group">
+          <label for="api-key">API Key</label>
+          <input type="password" id="api-key" placeholder="sk-..." required>
+          <small>从你的 API 服务商后台获取</small>
+        </div>
+        <div class="form-group">
+          <label for="model-name">Model 名称</label>
+          <input type="text" id="model-name" placeholder="deepseek-chat / gpt-4o-mini" required>
+          <small>例如：deepseek-chat、gpt-4o-mini、qwen-plus</small>
+        </div>
+        <div class="form-group toggle-group">
+          <label for="use-custom-translate">使用自定义模型进行实时翻译</label>
+          <label class="switch">
+            <input type="checkbox" id="use-custom-translate">
+            <span class="slider"></span>
+          </label>
+          <small>关闭时使用免费翻译接口；开启时使用你配置的模型</small>
+        </div>
+        <button type="submit" class="btn btn-primary btn-large">保存并开始使用</button>
+      </form>
+    </div>
+  </div>
+  <div id="settings-overlay" class="overlay hidden">
+    <div class="setup-modal">
+      <h2>⚙️ 设置</h2>
+      <form id="settings-form">
+        <div class="form-group">
+          <label for="set-api-base-url">API Base URL</label>
+          <input type="url" id="set-api-base-url" required>
+        </div>
+        <div class="form-group">
+          <label for="set-api-key">API Key</label>
+          <input type="password" id="set-api-key" required>
+        </div>
+        <div class="form-group">
+          <label for="set-model-name">Model 名称</label>
+          <input type="text" id="set-model-name" required>
+        </div>
+        <div class="form-group toggle-group">
+          <label for="set-use-custom-translate">使用自定义模型进行实时翻译</label>
+          <label class="switch">
+            <input type="checkbox" id="set-use-custom-translate">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="btn-row">
+          <button type="submit" class="btn btn-primary">保存设置</button>
+          <button type="button" id="close-settings" class="btn btn-secondary">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <div class="container">
+    <header>
+      <h1>🎓 课堂助手</h1>
+      <button id="settings-btn" class="btn-icon" title="设置">⚙️</button>
+    </header>
+    <section class="section recording-section">
+      <div class="status-bar">
+        <span id="status-indicator" class="status-dot inactive">就绪</span>
+      </div>
+      <button id="record-btn" class="btn btn-record">
+        <span class="record-icon">🎤</span>
+        <span id="record-label">开始录音</span>
+      </button>
+      <div id="timer" class="timer hidden">00:00</div>
+    </section>
+    <section id="download-section" class="section download-section hidden">
+      <div class="download-info">
+        <span id="file-name">录音文件</span>
+        <span id="file-size"></span>
+        <a id="download-link" class="btn btn-download" download="recording.webm">⬇ 下载录音</a>
+      </div>
+    </section>
+    <section class="section transcription-section">
+      <div class="section-header">
+        <h2>📝 识别文本与翻译</h2>
+        <button id="clear-text" class="btn btn-small">清空</button>
+      </div>
+      <div id="transcript-container" class="transcript-box">
+        <p class="placeholder">录音开始后，此处将实时显示英文识别结果与中文翻译...</p>
+      </div>
+    </section>
+    <section class="section manual-section">
+      <h2>✏️ 手动输入（可选）</h2>
+      <p class="small-text">如果未开启实时识别，可在此粘贴英文文本</p>
+      <textarea id="manual-text" placeholder="在此粘贴英文课程内容..."></textarea>
+    </section>
+    <section class="section analyze-section">
+      <button id="analyze-btn" class="btn btn-analyze">🔍 发送分析</button>
+      <div id="analyze-loading" class="loading hidden">
+        <div class="spinner"></div>
+        <span>正在分析中，请稍候...</span>
+      </div>
+    </section>
+    <section id="result-section" class="section result-section hidden">
+      <div class="section-header">
+        <h2>📊 分析结果</h2>
+        <button id="copy-result" class="btn btn-small">复制</button>
+      </div>
+      <div id="analysis-result" class="result-box"></div>
+    </section>
+    <div id="error-toast" class="toast hidden"></div>
+    <footer>
+      <p>所有 API 密钥仅保存在你的浏览器本地，不会上传到任何服务器。</p>
+    </footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
