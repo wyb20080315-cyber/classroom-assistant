@@ -59,6 +59,9 @@
   let isGoogleAuthenticated = false;
   let currentRecordingForDrive = null; 
 
+  // Translation queue: store all sentences with their translation status
+  let sentenceQueue = [];
+
   // --- Toast ---
   let toastTimer = null;
   function showToast(msg, isError) {
@@ -151,7 +154,6 @@
         'scope': 'https://www.googleapis.com/auth/drive.appdata',
         'discoveryDocs': ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]
       }).then(function() {
-        // Initialize Auth2
         gapi.auth2.init({
           client_id: cfg.googleClientId,
           scope: 'https://www.googleapis.com/auth/drive.appdata'
@@ -172,9 +174,7 @@
   async function handleAuthClick() {
     try {
       const authInstance = gapi.auth2.getAuthInstance();
-      if (!authInstance) {
-        throw new Error("Auth instance not found. Refresh page.");
-      }
+      if (!authInstance) throw new Error("Auth instance not found. Refresh page.");
       const response = await authInstance.signIn();
       isGoogleAuthenticated = true;
       googleLoginBtn.classList.add("hidden");
@@ -204,7 +204,6 @@
       const { blob, name, transcript, duration } = currentRecordingForDrive;
       const metadata = { name: name + ".webm", mimeType: "audio/webm" };
       
-      // Upload Audio
       await gapi.client.drive.files.create({
         parents: ["appDataFolder"],
         resource: metadata,
@@ -212,7 +211,6 @@
         fields: "id"
       });
 
-      // Update Index JSON
       const indexFile = await getRecordingsIndex();
       indexFile.recordings.push({
         id: Date.now(),
@@ -251,7 +249,6 @@
         const contentRes = await gapi.client.drive.files.get({ fileId: file.id, alt: 'media' });
         return { fileId: file.id, recordings: JSON.parse(contentRes.body) };
       }
-      // Create new index
       const res2 = await gapi.client.drive.files.create({
         parents: ["appDataFolder"],
         resource: { name: 'recordings.json', mimeType: 'application/json' },
@@ -295,14 +292,12 @@
         libraryList.appendChild(el);
       });
 
-      // Bind events
       libraryList.querySelectorAll(".btn-translate").forEach(btn => {
         btn.onclick = () => translateLibraryItem(index.recordings.find(r => r.id == btn.dataset.id));
       });
       libraryList.querySelectorAll(".btn-analyze-lib").forEach(btn => {
         btn.onclick = () => analyzeLibraryItem(index.recordings.find(r => r.id == btn.dataset.id));
       });
-
     } catch (err) {
       libraryLoading.classList.add("hidden");
       showToast("加载音源库失败: " + err.message, true);
@@ -344,7 +339,7 @@
     showToast("已加载录音文本，请点击“发送分析”");
   }
 
-  // --- Speech Recognition ---
+  // --- Speech Recognition (Fixed: No swallowing, immediate display) ---
   function getSpeechRecognition() {
     return window.SpeechRecognition || window.webkitSpeechRecognition;
   }
@@ -360,28 +355,27 @@
     rec.interimResults = true;
     rec.continuous = true;
 
-    // Improved logic: handle each sentence individually to prevent swallowing
     rec.onresult = (event) => {
+      // Process from the latest result backwards
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const res = event.results[i];
-        const transcript = res[0].transcript.trim();
+        const result = event.results[i];
+        const text = result[0].transcript.trim();
         
-        if (res.isFinal) {
-          // Finalized sentence: add to full transcript and UI immediately
-          fullTranscript += transcript + " ";
-          addTranscriptLine(transcript);
+        if (result.isFinal) {
+          // FINAL sentence: immediately display and queue translation
+          fullTranscript += text + " ";
+          createTranscriptEntry(text);
         } else {
-          // Interim sentence: update the very last line
-          const interimLines = transcriptContainer.querySelectorAll(".transcript-en");
-          if (interimLines.length > 0) {
-            interimLines[interimLines.length - 1].textContent = transcript;
-          }
+          // INTERIM: update the last entry's English text
+          updateLastTranscriptEn(text);
         }
       }
     };
 
-    rec.onerror = (e) => { if (e.error === "not-allowed") showToast("请允许麦克风权限", true); };
-    // Auto-restart to ensure continuous recording
+    rec.onerror = (e) => { 
+      if (e.error === "not-allowed") showToast("请允许麦克风权限", true); 
+    };
+    
     rec.onend = () => { 
       if (isRecording) { 
         try { rec.start(); } catch(e){} 
@@ -391,21 +385,32 @@
     return rec;
   }
 
-  function addTranscriptLine(enText) {
+  function createTranscriptEntry(enText) {
     const ph = transcriptContainer.querySelector(".placeholder");
     if (ph) ph.remove();
+
     const line = document.createElement("div");
     line.className = "transcript-line";
-    line.innerHTML = `<p class="transcript-en">${enText}</p><p class="transcript-zh loading-zh">翻译中...</p>`;
+    line.innerHTML = `
+      <p class="transcript-en">${enText}</p>
+      <p class="transcript-zh loading-zh">翻译中...</p>
+    `;
     transcriptContainer.appendChild(line);
     transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
-    
-    // Trigger translation immediately and independently for this line
+
+    // Queue translation independently
     const zhEl = line.querySelector(".transcript-zh");
-    translateText(enText, zhEl);
+    translateTextAsync(enText, zhEl);
   }
 
-  async function translateText(enText, targetEl) {
+  function updateLastTranscriptEn(text) {
+    const allEn = transcriptContainer.querySelectorAll(".transcript-en");
+    if (allEn.length > 0) {
+      allEn[allEn.length - 1].textContent = text;
+    }
+  }
+
+  async function translateTextAsync(enText, targetEl) {
     const cfg = getConfig();
     if (!cfg) {
       targetEl.textContent = "未配置";
@@ -421,7 +426,8 @@
           body: JSON.stringify({ 
             model: cfg.model, 
             messages: [{role:"system", content:"Translate to Simplified Chinese only. No extra text."}, {role:"user", content:enText}], 
-            max_tokens: 256 
+            max_tokens: 256,
+            temperature: 0.3
           })
         });
         if (!resp.ok) throw new Error("API Error");
@@ -436,8 +442,9 @@
       targetEl.textContent = translated.trim();
       targetEl.classList.remove("loading-zh");
     } catch (err) {
-      // Fail silently or show minimal error to keep UI clean
-      // targetEl.textContent = "[翻译失败]";
+      // Keep "翻译中..." or show minimal error
+      targetEl.textContent = "[翻译失败]";
+      targetEl.classList.remove("loading-zh");
     }
   }
 
