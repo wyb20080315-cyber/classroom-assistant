@@ -57,7 +57,7 @@
   
   // Google State
   let isGoogleAuthenticated = false;
-  let currentRecordingForDrive = null; // { blob, name, transcript, duration }
+  let currentRecordingForDrive = null; 
 
   // --- Toast ---
   let toastTimer = null;
@@ -147,12 +147,21 @@
     
     gapi.load('client:auth2', () => {
       gapi.client.init({
+        'apiKey': '',
         'clientId': cfg.googleClientId,
         'scope': 'https://www.googleapis.com/auth/drive.appdata',
         'discoveryDocs': ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]
       }).then(() => {
-        googleLoginBtn.onclick = handleAuthClick;
-      }).catch(err => {
+        // Explicitly init Auth2 for the sign-in button
+        gapi.auth2.init({
+            'client_id': cfg.googleClientId,
+            'cookiepolicy': 'single_host_origin',
+            'scope': 'https://www.googleapis.com/auth/drive.appdata'
+        }).then(() => {
+            console.log("Google Auth2 Initialized");
+            googleLoginBtn.onclick = handleAuthClick;
+        });
+      }, (err) => {
         console.error("Google API Init Error", err);
         showToast("Google API 初始化失败，请检查 Client ID", true);
       });
@@ -161,7 +170,8 @@
 
   async function handleAuthClick() {
     try {
-      const response = await gapi.auth2.getAuthInstance().signIn();
+      const authInstance = gapi.auth2.getAuthInstance();
+      const response = await authInstance.signIn();
       isGoogleAuthenticated = true;
       googleLoginBtn.classList.add("hidden");
       userInfo.textContent = response.getBasicProfile().getEmail();
@@ -169,6 +179,7 @@
       loadLibrary();
       showToast("Google 登录成功");
     } catch (err) {
+      console.error("Login Error", err);
       showToast("登录失败: " + err.message, true);
     }
   }
@@ -299,8 +310,7 @@
     const cfg = getConfig();
     showToast("正在生成汉语翻译...");
     
-    // Re-use the analysis prompt logic but for translation
-    const systemPrompt = "You are a professional translator. Translate the following English transcript into fluent Simplified Chinese. Maintain the original structure but make it readable.";
+    const systemPrompt = "You are a professional translator. Translate the following English transcript into fluent Simplified Chinese.";
     
     try {
       const url = cfg.baseUrl + "/chat/completions";
@@ -317,7 +327,6 @@
       const data = await resp.json();
       analysisResult.textContent = data.choices?.[0]?.message?.content || "翻译失败";
       resultSection.classList.remove("hidden");
-      // Scroll to result
       resultSection.scrollIntoView({ behavior: 'smooth' });
     } catch (err) {
       showToast("翻译失败: " + err.message, true);
