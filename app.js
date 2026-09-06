@@ -65,7 +65,7 @@
     errorToast.textContent = msg;
     errorToast.className = "toast" + (isError ? " error" : "");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { errorToast.className = "toast hidden"; }, 5000);
+    toastTimer = setTimeout(() => { errorToast.className = "toast hidden"; }, 6000);
   }
 
   // --- Timer ---
@@ -145,25 +145,26 @@
 
     googleLoginBtn.classList.remove("hidden");
     
-    gapi.load('client:auth2', () => {
+    gapi.load('client:auth2', function() {
       gapi.client.init({
-        'apiKey': '',
         'clientId': cfg.googleClientId,
         'scope': 'https://www.googleapis.com/auth/drive.appdata',
         'discoveryDocs': ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]
-      }).then(() => {
-        // Explicitly init Auth2 for the sign-in button
+      }).then(function() {
+        // Initialize Auth2
         gapi.auth2.init({
-            'client_id': cfg.googleClientId,
-            'cookiepolicy': 'single_host_origin',
-            'scope': 'https://www.googleapis.com/auth/drive.appdata'
-        }).then(() => {
-            console.log("Google Auth2 Initialized");
-            googleLoginBtn.onclick = handleAuthClick;
+          client_id: cfg.googleClientId,
+          scope: 'https://www.googleapis.com/auth/drive.appdata'
+        }).then(function() {
+          console.log("Google API Initialized");
+          googleLoginBtn.onclick = handleAuthClick;
+        }, function(err) {
+          console.error("Auth2 Init Error:", err);
+          showToast("Google 初始化失败，请检查控制台报错", true);
         });
-      }, (err) => {
-        console.error("Google API Init Error", err);
-        showToast("Google API 初始化失败，请检查 Client ID", true);
+      }, function(err) {
+        console.error("Client Init Error:", err);
+        showToast("Google API 无法加载，请检查 Client ID", true);
       });
     });
   }
@@ -171,6 +172,9 @@
   async function handleAuthClick() {
     try {
       const authInstance = gapi.auth2.getAuthInstance();
+      if (!authInstance) {
+        throw new Error("Auth instance not found. Refresh page.");
+      }
       const response = await authInstance.signIn();
       isGoogleAuthenticated = true;
       googleLoginBtn.classList.add("hidden");
@@ -179,7 +183,7 @@
       loadLibrary();
       showToast("Google 登录成功");
     } catch (err) {
-      console.error("Login Error", err);
+      console.error("Login Error:", err);
       showToast("登录失败: " + err.message, true);
     }
   }
@@ -356,22 +360,33 @@
     rec.interimResults = true;
     rec.continuous = true;
 
+    // Improved logic: handle each sentence individually to prevent swallowing
     rec.onresult = (event) => {
-      let interim = "", finalText = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const res = event.results[i];
-        if (res.isFinal) finalText += res[0].transcript;
-        else interim += res[0].transcript;
+        const transcript = res[0].transcript.trim();
+        
+        if (res.isFinal) {
+          // Finalized sentence: add to full transcript and UI immediately
+          fullTranscript += transcript + " ";
+          addTranscriptLine(transcript);
+        } else {
+          // Interim sentence: update the very last line
+          const interimLines = transcriptContainer.querySelectorAll(".transcript-en");
+          if (interimLines.length > 0) {
+            interimLines[interimLines.length - 1].textContent = transcript;
+          }
+        }
       }
-      if (finalText) {
-        fullTranscript += finalText + " ";
-        addTranscriptLine(finalText.trim());
-      }
-      if (interim) updateLastTranscript(interim.trim());
     };
 
     rec.onerror = (e) => { if (e.error === "not-allowed") showToast("请允许麦克风权限", true); };
-    rec.onend = () => { if (isRecording) { try { rec.start(); } catch(e){} } };
+    // Auto-restart to ensure continuous recording
+    rec.onend = () => { 
+      if (isRecording) { 
+        try { rec.start(); } catch(e){} 
+      }
+    };
 
     return rec;
   }
@@ -384,23 +399,30 @@
     line.innerHTML = `<p class="transcript-en">${enText}</p><p class="transcript-zh loading-zh">翻译中...</p>`;
     transcriptContainer.appendChild(line);
     transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
-    translateText(enText, line.querySelector(".transcript-zh"));
-  }
-
-  function updateLastTranscript(text) {
-    const lines = transcriptContainer.querySelectorAll(".transcript-en");
-    if (lines.length > 0) lines[lines.length - 1].textContent = text;
+    
+    // Trigger translation immediately and independently for this line
+    const zhEl = line.querySelector(".transcript-zh");
+    translateText(enText, zhEl);
   }
 
   async function translateText(enText, targetEl) {
     const cfg = getConfig();
-    if (!cfg) return;
+    if (!cfg) {
+      targetEl.textContent = "未配置";
+      targetEl.classList.remove("loading-zh");
+      return;
+    }
     try {
       let translated = "";
       if (cfg.useCustomTranslate) {
         const resp = await fetch(cfg.baseUrl + "/chat/completions", {
-          method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + cfg.apiKey },
-          body: JSON.stringify({ model: cfg.model, messages: [{role:"system", content:"Translate to Chinese only."}, {role:"user", content:enText}], max_tokens: 512 })
+          method: "POST", 
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + cfg.apiKey },
+          body: JSON.stringify({ 
+            model: cfg.model, 
+            messages: [{role:"system", content:"Translate to Simplified Chinese only. No extra text."}, {role:"user", content:enText}], 
+            max_tokens: 256 
+          })
         });
         if (!resp.ok) throw new Error("API Error");
         const data = await resp.json();
@@ -414,7 +436,8 @@
       targetEl.textContent = translated.trim();
       targetEl.classList.remove("loading-zh");
     } catch (err) {
-      targetEl.textContent = "[翻译失败]";
+      // Fail silently or show minimal error to keep UI clean
+      // targetEl.textContent = "[翻译失败]";
     }
   }
 
