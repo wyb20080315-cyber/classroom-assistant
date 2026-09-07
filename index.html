@@ -5,31 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>课堂助手 | Classroom Assistant</title>
   <link rel="stylesheet" href="style.css">
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="https://apis.google.com/js/api.js" async defer></script>
 </head>
 <body>
   <div id="setup-overlay" class="overlay hidden">
     <div class="setup-modal">
+      <button id="setup-close" class="setup-close">✕</button>
       <h1>🎓 课堂助手</h1>
-      <p class="setup-desc">首次使用请配置你的大模型 API 和谷歌账号信息。</p>
+      <p class="setup-desc">配置大模型 API 以获得翻译和分析功能。<br>如果不配置，将无法使用实时翻译和 AI 分析。</p>
       <form id="setup-form">
         <div class="form-group">
           <label for="api-base-url">API Base URL</label>
-          <input type="url" id="api-base-url" placeholder="https://你的中转站地址/v1" required>
+          <input type="url" id="api-base-url" placeholder="https://api.openai.com/v1">
         </div>
         <div class="form-group">
           <label for="api-key">API Key</label>
-          <input type="password" id="api-key" placeholder="sk-..." required>
+          <input type="password" id="api-key" placeholder="sk-...">
         </div>
         <div class="form-group">
           <label for="model-name">Model 名称</label>
-          <input type="text" id="model-name" placeholder="deepseek-chat / gpt-4o-mini" required>
-        </div>
-        <div class="form-group">
-          <label for="google-client-id">Google Client ID</label>
-          <input type="text" id="google-client-id" placeholder="从 Google Cloud Console 获取" required>
-          <small>用于登录和云盘存储，不会泄露你的密码</small>
+          <input type="text" id="model-name" placeholder="gpt-4o-mini">
         </div>
         <div class="form-group toggle-group">
           <label for="use-custom-translate">使用自定义模型进行实时翻译</label>
@@ -49,19 +43,15 @@
       <form id="settings-form">
         <div class="form-group">
           <label for="set-api-base-url">API Base URL</label>
-          <input type="url" id="set-api-base-url" required>
+          <input type="url" id="set-api-base-url">
         </div>
         <div class="form-group">
           <label for="set-api-key">API Key</label>
-          <input type="password" id="set-api-key" required>
+          <input type="password" id="set-api-key">
         </div>
         <div class="form-group">
           <label for="set-model-name">Model 名称</label>
-          <input type="text" id="set-model-name" required>
-        </div>
-        <div class="form-group">
-          <label for="set-google-client-id">Google Client ID</label>
-          <input type="text" id="set-google-client-id" required>
+          <input type="text" id="set-model-name">
         </div>
         <div class="form-group toggle-group">
           <label for="set-use-custom-translate">使用自定义模型进行实时翻译</label>
@@ -80,14 +70,8 @@
 
   <div class="container">
     <header>
-      <div class="header-left">
-        <h1>🎓 课堂助手</h1>
-        <span id="user-info" class="user-info hidden"></span>
-      </div>
-      <div class="header-right">
-        <button id="google-login-btn" class="btn btn-google hidden">🔑 登录 Google</button>
-        <button id="settings-btn" class="btn-icon" title="设置">⚙️</button>
-      </div>
+      <h1>🎓 课堂助手</h1>
+      <button id="settings-btn" class="btn-icon" title="设置">⚙️</button>
     </header>
 
     <section class="section recording-section">
@@ -99,37 +83,36 @@
         <span id="record-label">开始录音</span>
       </button>
       <div id="timer" class="timer hidden">00:00</div>
-      <div id="save-to-drive-btn-container" class="hidden">
-        <button id="save-to-drive-btn" class="btn btn-drive">☁️ 保存到音源库</button>
+    </section>
+
+    <section id="recordings-section" class="section recordings-section hidden">
+      <div class="section-header">
+        <h2>📂 录音列表</h2>
       </div>
+      <div id="recordings-list"></div>
     </section>
 
     <section class="section transcription-section">
       <div class="section-header">
-        <h2>📝 识别文本与翻译</h2>
+        <h2>📝 实时翻译</h2>
         <button id="clear-text" class="btn btn-small">清空</button>
       </div>
       <div id="transcript-container" class="transcript-box">
-        <p class="placeholder">录音开始后，此处将实时显示英文识别结果与中文翻译...</p>
+        <p class="placeholder">录音开始后，此处将实时显示中文翻译字幕...</p>
       </div>
-    </section>
-
-    <section id="library-section" class="section library-section hidden">
-      <div class="section-header">
-        <h2>📚 音源库</h2>
-        <span id="library-loading" class="loading-text hidden">加载中...</span>
-      </div>
-      <div id="library-list"></div>
-    </section>
-
-    <section class="section manual-section">
-      <h2>✏️ 手动输入 / 库中分析</h2>
-      <p class="small-text">粘贴英文文本，或从音源库选择录音进行分析</p>
-      <textarea id="manual-text" placeholder="在此粘贴英文课程内容..."></textarea>
     </section>
 
     <section class="section analyze-section">
-      <button id="analyze-btn" class="btn btn-analyze">🔍 发送分析</button>
+      <h2>🔍 AI 课后分析</h2>
+      <p class="small-text">上传电脑中的 MP4 音频文件或 TXT 文档进行 AI 分析</p>
+      <div class="file-upload-area">
+        <input type="file" id="analysis-file" accept=".mp4,.m4a,.webm,.txt">
+        <label for="analysis-file" class="file-upload-label">
+          <span class="upload-icon">📂</span>
+          <span id="file-name-display">点击选择文件 (支持 MP4/TXT)</span>
+        </label>
+      </div>
+      <button id="analyze-btn" class="btn btn-analyze">开始分析</button>
       <div id="analyze-loading" class="loading hidden">
         <div class="spinner"></div>
         <span>正在分析中，请稍候...</span>

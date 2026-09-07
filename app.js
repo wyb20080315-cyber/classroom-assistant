@@ -1,6 +1,6 @@
 // ============================================================
 // 课堂助手 - Classroom Assistant
-// Features: Recording, Transcription, Google Drive Library, AI Analysis
+// Features: Recording, Transcription, Local Storage, AI Analysis
 // ============================================================
 
 (function () {
@@ -17,6 +17,7 @@
   // --- DOM Refs ---
   const $ = (sel) => document.querySelector(sel);
   const setupOverlay = $("#setup-overlay");
+  const setupClose = $("#setup-close");
   const settingsOverlay = $("#settings-overlay");
   const setupForm = $("#setup-form");
   const settingsForm = $("#settings-form");
@@ -25,7 +26,6 @@
   const statusIndicator = $("#status-indicator");
   const timerEl = $("#timer");
   const transcriptContainer = $("#transcript-container");
-  const manualText = $("#manual-text");
   const analyzeBtn = $("#analyze-btn");
   const analyzeLoading = $("#analyze-loading");
   const resultSection = $("#result-section");
@@ -35,32 +35,20 @@
   const copyResultBtn = $("#copy-result");
   const settingsBtn = $("#settings-btn");
   const closeSettingsBtn = $("#close-settings");
-  
-  // New UI elements
-  const googleLoginBtn = $("#google-login-btn");
-  const userInfo = $("#user-info");
-  const saveToDriveBtn = $("#save-to-drive-btn");
-  const saveToDriveBtnContainer = $("#save-to-drive-btn-container");
-  const librarySection = $("#library-section");
-  const libraryList = $("#library-list");
-  const libraryLoading = $("#library-loading");
+  const recordingsSection = $("#recordings-section");
+  const recordingsList = $("#recordings-list");
+  const analysisFileInput = $("#analysis-file");
+  const fileNameDisplay = $("#file-name-display");
 
   // --- State ---
   let mediaRecorder = null;
   let audioChunks = [];
-  let currentAudioBlob = null;
   let recognition = null;
   let isRecording = false;
   let timerInterval = null;
   let timerSeconds = 0;
   let fullTranscript = "";
-  
-  // Google State
-  let isGoogleAuthenticated = false;
-  let currentRecordingForDrive = null; 
-
-  // Translation queue: store all sentences with their translation status
-  let sentenceQueue = [];
+  let recordings = [];
 
   // --- Toast ---
   let toastTimer = null;
@@ -68,7 +56,7 @@
     errorToast.textContent = msg;
     errorToast.className = "toast" + (isError ? " error" : "");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { errorToast.className = "toast hidden"; }, 6000);
+    toastTimer = setTimeout(() => { errorToast.className = "toast hidden"; }, 5000);
   }
 
   // --- Timer ---
@@ -94,22 +82,25 @@
     if (!getConfig()) setupOverlay.classList.remove("hidden");
   }
 
+  setupClose.addEventListener("click", () => {
+    setupOverlay.classList.add("hidden");
+    showToast("已跳过设置，翻译和分析功能将不可用");
+  });
+
   setupForm.addEventListener("submit", (e) => {
     e.preventDefault();
     const cfg = {
       baseUrl: $("#api-base-url").value.trim().replace(/\/+$/, ""),
       apiKey: $("#api-key").value.trim(),
       model: $("#model-name").value.trim(),
-      googleClientId: $("#google-client-id").value.trim(),
       useCustomTranslate: $("#use-custom-translate").checked
     };
-    if (!cfg.baseUrl || !cfg.apiKey || !cfg.model || !cfg.googleClientId) {
+    if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) {
       showToast("请填写所有必填字段", true); return;
     }
     saveConfig(cfg);
     setupOverlay.classList.add("hidden");
     showToast("设置已保存");
-    initGoogleApi();
   });
 
   settingsBtn.addEventListener("click", () => {
@@ -118,8 +109,12 @@
       $("#set-api-base-url").value = cfg.baseUrl;
       $("#set-api-key").value = cfg.apiKey;
       $("#set-model-name").value = cfg.model;
-      $("#set-google-client-id").value = cfg.googleClientId;
       $("#set-use-custom-translate").checked = cfg.useCustomTranslate;
+    } else {
+      $("#set-api-base-url").value = "";
+      $("#set-api-key").value = "";
+      $("#set-model-name").value = "";
+      $("#set-use-custom-translate").checked = false;
     }
     settingsOverlay.classList.remove("hidden");
   });
@@ -132,214 +127,14 @@
       baseUrl: $("#set-api-base-url").value.trim().replace(/\/+$/, ""),
       apiKey: $("#set-api-key").value.trim(),
       model: $("#set-model-name").value.trim(),
-      googleClientId: $("#set-google-client-id").value.trim(),
       useCustomTranslate: $("#set-use-custom-translate").checked
     };
     saveConfig(cfg);
     settingsOverlay.classList.add("hidden");
     showToast("设置已更新");
-    if (!isGoogleAuthenticated) initGoogleApi();
   });
 
-  // --- Google API Integration ---
-  function initGoogleApi() {
-    const cfg = getConfig();
-    if (!cfg || !cfg.googleClientId) return;
-
-    googleLoginBtn.classList.remove("hidden");
-    
-    gapi.load('client:auth2', function() {
-      gapi.client.init({
-        'clientId': cfg.googleClientId,
-        'scope': 'https://www.googleapis.com/auth/drive.appdata',
-        'discoveryDocs': ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"]
-      }).then(function() {
-        gapi.auth2.init({
-          client_id: cfg.googleClientId,
-          scope: 'https://www.googleapis.com/auth/drive.appdata'
-        }).then(function() {
-          console.log("Google API Initialized");
-          googleLoginBtn.onclick = handleAuthClick;
-        }, function(err) {
-          console.error("Auth2 Init Error:", err);
-          showToast("Google 初始化失败，请检查控制台报错", true);
-        });
-      }, function(err) {
-        console.error("Client Init Error:", err);
-        showToast("Google API 无法加载，请检查 Client ID", true);
-      });
-    });
-  }
-
-  async function handleAuthClick() {
-    try {
-      const authInstance = gapi.auth2.getAuthInstance();
-      if (!authInstance) throw new Error("Auth instance not found. Refresh page.");
-      const response = await authInstance.signIn();
-      isGoogleAuthenticated = true;
-      googleLoginBtn.classList.add("hidden");
-      userInfo.textContent = response.getBasicProfile().getEmail();
-      userInfo.classList.remove("hidden");
-      loadLibrary();
-      showToast("Google 登录成功");
-    } catch (err) {
-      console.error("Login Error:", err);
-      showToast("登录失败: " + err.message, true);
-    }
-  }
-
-  // --- Drive Operations ---
-  async function saveRecordingToDrive() {
-    if (!currentRecordingForDrive) {
-      showToast("没有可保存的录音", true); return;
-    }
-    if (!isGoogleAuthenticated) {
-      showToast("请先登录 Google", true); return;
-    }
-
-    saveToDriveBtn.textContent = "保存中...";
-    saveToDriveBtn.disabled = true;
-
-    try {
-      const { blob, name, transcript, duration } = currentRecordingForDrive;
-      const metadata = { name: name + ".webm", mimeType: "audio/webm" };
-      
-      await gapi.client.drive.files.create({
-        parents: ["appDataFolder"],
-        resource: metadata,
-        requestBody: blob,
-        fields: "id"
-      });
-
-      const indexFile = await getRecordingsIndex();
-      indexFile.recordings.push({
-        id: Date.now(),
-        name: name,
-        duration: duration,
-        transcript: transcript,
-        date: new Date().toISOString()
-      });
-
-      await gapi.client.drive.files.update({
-        fileId: indexFile.fileId,
-        resource: { contents: JSON.stringify(indexFile.recordings) },
-        fields: "id"
-      });
-
-      showToast("已保存到音源库");
-      loadLibrary();
-    } catch (err) {
-      console.error(err);
-      showToast("保存到云盘失败: " + err.message, true);
-    } finally {
-      saveToDriveBtn.textContent = "☁️ 保存到音源库";
-      saveToDriveBtn.disabled = false;
-    }
-  }
-
-  async function getRecordingsIndex() {
-    try {
-      const res = await gapi.client.drive.files.list({
-        supportsAllDrives: true,
-        includeItemsFromAllDrives: true,
-        q: "name = 'recordings.json' and parents in ['appDataFolder']"
-      });
-      if (res.result.files.length > 0) {
-        const file = res.result.files[0];
-        const contentRes = await gapi.client.drive.files.get({ fileId: file.id, alt: 'media' });
-        return { fileId: file.id, recordings: JSON.parse(contentRes.body) };
-      }
-      const res2 = await gapi.client.drive.files.create({
-        parents: ["appDataFolder"],
-        resource: { name: 'recordings.json', mimeType: 'application/json' },
-        fields: "id"
-      });
-      return { fileId: res2.result.id, recordings: [] };
-    } catch (err) {
-      throw new Error("获取音源库索引失败: " + err.message);
-    }
-  }
-
-  async function loadLibrary() {
-    if (!isGoogleAuthenticated) return;
-    librarySection.classList.remove("hidden");
-    libraryLoading.classList.remove("hidden");
-    libraryList.innerHTML = "";
-
-    try {
-      const index = await getRecordingsIndex();
-      libraryLoading.classList.add("hidden");
-      
-      if (index.recordings.length === 0) {
-        libraryList.innerHTML = "<p class='small-text'>音源库为空，录音后点击“保存到音源库”即可。</p>";
-        return;
-      }
-
-      index.recordings.forEach(rec => {
-        const el = document.createElement("div");
-        el.className = "library-item";
-        const date = new Date(rec.date).toLocaleDateString();
-        el.innerHTML = `
-          <div class="recording-meta">
-            <span class="recording-name">${rec.name}</span>
-            <span class="recording-details">${rec.duration} · ${date}</span>
-          </div>
-          <div class="recording-actions">
-            <button class="btn-lib-action btn-translate" data-id="${rec.id}">🀄 一键汉语</button>
-            <button class="btn-lib-action btn-analyze-lib" data-id="${rec.id}">🔍 发送分析</button>
-          </div>
-        `;
-        libraryList.appendChild(el);
-      });
-
-      libraryList.querySelectorAll(".btn-translate").forEach(btn => {
-        btn.onclick = () => translateLibraryItem(index.recordings.find(r => r.id == btn.dataset.id));
-      });
-      libraryList.querySelectorAll(".btn-analyze-lib").forEach(btn => {
-        btn.onclick = () => analyzeLibraryItem(index.recordings.find(r => r.id == btn.dataset.id));
-      });
-    } catch (err) {
-      libraryLoading.classList.add("hidden");
-      showToast("加载音源库失败: " + err.message, true);
-    }
-  }
-
-  async function translateLibraryItem(rec) {
-    if (!rec) return;
-    const cfg = getConfig();
-    showToast("正在生成汉语翻译...");
-    
-    const systemPrompt = "You are a professional translator. Translate the following English transcript into fluent Simplified Chinese.";
-    
-    try {
-      const url = cfg.baseUrl + "/chat/completions";
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + cfg.apiKey },
-        body: JSON.stringify({
-          model: cfg.model,
-          messages: [{ role: "system", content: systemPrompt }, { role: "user", content: rec.transcript }],
-          max_tokens: 4096
-        })
-      });
-      if (!resp.ok) throw new Error("API Error");
-      const data = await resp.json();
-      analysisResult.textContent = data.choices?.[0]?.message?.content || "翻译失败";
-      resultSection.classList.remove("hidden");
-      resultSection.scrollIntoView({ behavior: 'smooth' });
-    } catch (err) {
-      showToast("翻译失败: " + err.message, true);
-    }
-  }
-
-  function analyzeLibraryItem(rec) {
-    if (!rec) return;
-    manualText.value = rec.transcript;
-    manualText.scrollIntoView({ behavior: 'smooth' });
-    showToast("已加载录音文本，请点击“发送分析”");
-  }
-
-  // --- Speech Recognition (Fixed: No swallowing, immediate display) ---
+  // --- Speech Recognition ---
   function getSpeechRecognition() {
     return window.SpeechRecognition || window.webkitSpeechRecognition;
   }
@@ -356,64 +151,52 @@
     rec.continuous = true;
 
     rec.onresult = (event) => {
-      // Process from the latest result backwards
+      let interim = "", finalText = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        const text = result[0].transcript.trim();
-        
-        if (result.isFinal) {
-          // FINAL sentence: immediately display and queue translation
-          fullTranscript += text + " ";
-          createTranscriptEntry(text);
-        } else {
-          // INTERIM: update the last entry's English text
-          updateLastTranscriptEn(text);
-        }
+        const res = event.results[i];
+        if (res.isFinal) finalText += res[0].transcript;
+        else interim += res[0].transcript;
       }
+      if (finalText) {
+        fullTranscript += finalText + " ";
+        addTranscriptLine(finalText.trim());
+      }
+      if (interim) updateLastTranscript(interim.trim());
     };
 
-    rec.onerror = (e) => { 
-      if (e.error === "not-allowed") showToast("请允许麦克风权限", true); 
-    };
-    
-    rec.onend = () => { 
-      if (isRecording) { 
-        try { rec.start(); } catch(e){} 
-      }
-    };
+    rec.onerror = (e) => { if (e.error === "not-allowed") showToast("请允许麦克风权限", true); };
+    rec.onend = () => { if (isRecording) { try { rec.start(); } catch(e){} } };
 
     return rec;
   }
 
-  function createTranscriptEntry(enText) {
+  function addTranscriptLine(enText) {
     const ph = transcriptContainer.querySelector(".placeholder");
     if (ph) ph.remove();
 
     const line = document.createElement("div");
     line.className = "transcript-line";
-    line.innerHTML = `
-      <p class="transcript-en">${enText}</p>
-      <p class="transcript-zh loading-zh">翻译中...</p>
-    `;
+    
+    const zhP = document.createElement("p");
+    zhP.className = "transcript-zh loading-zh";
+    zhP.textContent = "翻译中...";
+    line.appendChild(zhP);
+
     transcriptContainer.appendChild(line);
     transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
 
-    // Queue translation independently
-    const zhEl = line.querySelector(".transcript-zh");
-    translateTextAsync(enText, zhEl);
+    translateText(enText, zhP);
   }
 
-  function updateLastTranscriptEn(text) {
-    const allEn = transcriptContainer.querySelectorAll(".transcript-en");
-    if (allEn.length > 0) {
-      allEn[allEn.length - 1].textContent = text;
-    }
+  function updateLastTranscript(text) {
+    // Only update interim if needed, but we hide English so we just update the translation target
+    // For simplicity, we keep the "翻译中..." until the final translation arrives
   }
 
-  async function translateTextAsync(enText, targetEl) {
+  async function translateText(enText, targetEl) {
     const cfg = getConfig();
     if (!cfg) {
-      targetEl.textContent = "未配置";
+      targetEl.textContent = "[未配置 API]";
       targetEl.classList.remove("loading-zh");
       return;
     }
@@ -425,8 +208,8 @@
           headers: { "Content-Type": "application/json", "Authorization": "Bearer " + cfg.apiKey },
           body: JSON.stringify({ 
             model: cfg.model, 
-            messages: [{role:"system", content:"Translate to Simplified Chinese only. No extra text."}, {role:"user", content:enText}], 
-            max_tokens: 256,
+            messages: [{role:"system", content:"Translate to Simplified Chinese only."}, {role:"user", content:enText}], 
+            max_tokens: 512,
             temperature: 0.3
           })
         });
@@ -442,7 +225,6 @@
       targetEl.textContent = translated.trim();
       targetEl.classList.remove("loading-zh");
     } catch (err) {
-      // Keep "翻译中..." or show minimal error
       targetEl.textContent = "[翻译失败]";
       targetEl.classList.remove("loading-zh");
     }
@@ -494,35 +276,88 @@
 
   function onRecordingStopped() {
     if (audioChunks.length === 0) return;
-    currentAudioBlob = new Blob(audioChunks, { type: "audio/webm" });
+    const blob = new Blob(audioChunks, { type: "audio/webm" });
+    const url = URL.createObjectURL(blob);
     const ts = new Date().toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(/\//g, "-");
     const name = "录音_" + ts;
-    
-    currentRecordingForDrive = {
-      blob: currentAudioBlob,
-      name: name,
-      transcript: fullTranscript.trim(),
-      duration: formatDuration(timerSeconds)
-    };
+    const size = formatFileSize(blob.size);
+    const duration = formatDuration(timerSeconds);
 
-    saveToDriveBtnContainer.classList.remove("hidden");
+    const rec = { id: Date.now(), name, size, duration, url };
+    recordings.unshift(rec);
+    renderRecordings();
   }
 
-  saveToDriveBtn.addEventListener("click", saveRecordingToDrive);
+  function renderRecordings() {
+    if (recordings.length === 0) {
+      recordingsSection.classList.add("hidden");
+      return;
+    }
+    recordingsSection.classList.remove("hidden");
+    recordingsList.innerHTML = "";
+    recordings.forEach(rec => {
+      const el = document.createElement("div");
+      el.className = "recording-item";
+      el.innerHTML = `
+        <div class="recording-meta">
+          <span class="recording-name">${rec.name}.mp4</span>
+          <span class="recording-details">${rec.duration} · ${rec.size}</span>
+        </div>
+        <div class="recording-actions">
+          <a class="btn-download-item" href="${rec.url}" download="${rec.name}.mp4">⬇ 下载</a>
+          <button class="btn-delete" data-id="${rec.id}">✕ 删除</button>
+        </div>
+      `;
+      recordingsList.appendChild(el);
+    });
+
+    recordingsList.querySelectorAll(".btn-delete").forEach(btn => {
+      btn.onclick = () => {
+        const id = Number(btn.dataset.id);
+        const rec = recordings.find(r => r.id === id);
+        if (rec) URL.revokeObjectURL(rec.url);
+        recordings = recordings.filter(r => r.id !== id);
+        renderRecordings();
+      };
+    });
+  }
+
+  function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  }
 
   // --- Clear transcript ---
   clearTextBtn.addEventListener("click", () => {
     fullTranscript = "";
-    transcriptContainer.innerHTML = '<p class="placeholder">录音开始后，此处将实时显示英文识别结果与中文翻译...</p>';
+    transcriptContainer.innerHTML = '<p class="placeholder">录音开始后，此处将实时显示中文翻译字幕...</p>';
   });
 
-  // --- Analysis ---
+  // --- File Analysis ---
+  analysisFileInput.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      fileNameDisplay.textContent = file.name;
+    }
+  });
+
   analyzeBtn.addEventListener("click", async () => {
     const cfg = getConfig();
     if (!cfg) { showToast("请先配置 API 设置", true); return; }
 
-    const text = fullTranscript.trim() || manualText.value.trim();
-    if (!text) { showToast("请先录音或粘贴英文文本", true); return; }
+    const file = analysisFileInput.files[0];
+    if (!file) { showToast("请先选择一个文件", true); return; }
+
+    let text = "";
+    if (file.type === "text/plain" || file.name.endsWith(".txt")) {
+      text = await file.text();
+    } else {
+      showToast("AI 分析仅支持 TXT 文本文件", true);
+      return;
+    }
+
+    if (!text.trim()) { showToast("文件内容为空", true); return; }
 
     analyzeLoading.classList.remove("hidden");
     analyzeBtn.disabled = true;
@@ -561,10 +396,6 @@
   });
 
   // --- Init ---
-  const cfg = getConfig();
-  if (cfg) {
-    googleLoginBtn.classList.remove("hidden");
-    initGoogleApi();
-  }
+  renderRecordings();
   showSetup();
 })();
