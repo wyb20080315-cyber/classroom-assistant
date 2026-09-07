@@ -272,6 +272,8 @@
     statusIndicator.textContent = "已停止";
     statusIndicator.className = "status-dot inactive";
     stopTimer();
+    timerSeconds = 0;
+    timerEl.textContent = "00:00";
   }
 
   function onRecordingStopped() {
@@ -399,3 +401,4 @@
   renderRecordings();
   showSetup();
 })();
+
