@@ -1,7 +1,7 @@
 // ============================================================
 // 课堂助手 - Classroom Assistant
 // Features: Recording, Transcription, Local Storage, AI Analysis
-// Translation Logic: Queued Async Translation to prevent blocking
+// Translation Logic: Independent Async Translation (No blocking)
 // ============================================================
 
 (function () {
@@ -50,10 +50,6 @@
   let timerSeconds = 0;
   let fullTranscript = "";
   let recordings = [];
-  
-  // Translation Queue
-  let translationQueue = [];
-  let isProcessingQueue = false;
 
   // --- Toast ---
   let toastTimer = null;
@@ -195,70 +191,53 @@
     transcriptContainer.appendChild(line);
     transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
 
-    // Add to queue instead of immediate translation
-    translationQueue.push({ text: enText, element: zhP });
-    processTranslationQueue();
+    // Fire translation immediately and independently
+    translateTextNow(enText, zhP);
   }
 
   function updateLastTranscript(text) {
-    // For interim results, we don't update the UI immediately to avoid flickering
-    // The final result will trigger the translation queue
+    // We no longer update interim text to avoid flickering and losing final translations
   }
 
-  async function processTranslationQueue() {
-    if (isProcessingQueue || translationQueue.length === 0) return;
-    isProcessingQueue = true;
-
+  async function translateTextNow(enText, targetEl) {
     const cfg = getConfig();
     if (!cfg) {
-      // If no config, clear the queue and mark all as unavailable
-      while (translationQueue.length > 0) {
-        const item = translationQueue.shift();
-        item.element.textContent = "[未配置 API]";
-        item.element.classList.remove("loading-zh");
-      }
-      isProcessingQueue = false;
+      targetEl.textContent = "[未配置 API]";
+      targetEl.classList.remove("loading-zh");
       return;
     }
-
-    // Process all items in the queue
-    const promises = translationQueue.map(item => translateText(item.text, item.element));
-    await Promise.all(promises);
     
-    translationQueue = [];
-    isProcessingQueue = false;
-  }
-
-  async function translateText(enText, targetEl) {
-    const cfg = getConfig();
-    try {
-      let translated = "";
-      if (cfg.useCustomTranslate) {
-        const resp = await fetch(cfg.baseUrl + "/chat/completions", {
-          method: "POST", 
-          headers: { "Content-Type": "application/json", "Authorization": "Bearer " + cfg.apiKey },
-          body: JSON.stringify({ 
-            model: cfg.model, 
-            messages: [{role:"system", content:"Translate to Simplified Chinese only."}, {role:"user", content:enText}], 
-            max_tokens: 512,
-            temperature: 0.3
-          })
-        });
-        if (!resp.ok) throw new Error("API Error");
-        const data = await resp.json();
-        translated = data.choices?.[0]?.message?.content || "";
-      } else {
-        const resp = await fetch("https://api.mymemory.translated.net/get?q=" + encodeURIComponent(enText) + "&langpair=en|zh-CN");
-        if (!resp.ok) throw new Error("Network Error");
-        const data = await resp.json();
-        translated = data.responseData?.translatedText || "";
+    // Run async without blocking anything else
+    (async () => {
+      try {
+        let translated = "";
+        if (cfg.useCustomTranslate) {
+          const resp = await fetch(cfg.baseUrl + "/chat/completions", {
+            method: "POST", 
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + cfg.apiKey },
+            body: JSON.stringify({ 
+              model: cfg.model, 
+              messages: [{role:"system", content:"Translate to Simplified Chinese only."}, {role:"user", content:enText}], 
+              max_tokens: 512,
+              temperature: 0.3
+            })
+          });
+          if (!resp.ok) throw new Error("API Error");
+          const data = await resp.json();
+          translated = data.choices?.[0]?.message?.content || "";
+        } else {
+          const resp = await fetch("https://api.mymemory.translated.net/get?q=" + encodeURIComponent(enText) + "&langpair=en|zh-CN");
+          if (!resp.ok) throw new Error("Network Error");
+          const data = await resp.json();
+          translated = data.responseData?.translatedText || "";
+        }
+        targetEl.textContent = translated.trim();
+        targetEl.classList.remove("loading-zh");
+      } catch (err) {
+        targetEl.textContent = "[翻译失败]";
+        targetEl.classList.remove("loading-zh");
       }
-      targetEl.textContent = translated.trim();
-      targetEl.classList.remove("loading-zh");
-    } catch (err) {
-      targetEl.textContent = "[翻译失败]";
-      targetEl.classList.remove("loading-zh");
-    }
+    })();
   }
 
   // --- Recording ---
@@ -303,9 +282,6 @@
     statusIndicator.textContent = "已停止";
     statusIndicator.className = "status-dot inactive";
     stopTimer();
-    
-    // Ensure any remaining queued translations are processed
-    processTranslationQueue();
   }
 
   function onRecordingStopped() {
@@ -366,7 +342,6 @@
   clearTextBtn.addEventListener("click", () => {
     fullTranscript = "";
     transcriptContainer.innerHTML = '<p class="placeholder">录音开始后，此处将实时显示中文翻译字幕...</p>';
-    translationQueue = []; // Clear translation queue as well
   });
 
   // --- File Analysis ---
