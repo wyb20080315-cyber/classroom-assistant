@@ -1,6 +1,7 @@
 // ============================================================
 // 课堂助手 - Classroom Assistant
 // Features: Recording, Transcription, Local Storage, AI Analysis
+// Translation Logic: Queued Async Translation to prevent blocking
 // ============================================================
 
 (function () {
@@ -49,6 +50,10 @@
   let timerSeconds = 0;
   let fullTranscript = "";
   let recordings = [];
+  
+  // Translation Queue
+  let translationQueue = [];
+  let isProcessingQueue = false;
 
   // --- Toast ---
   let toastTimer = null;
@@ -70,7 +75,12 @@
       timerEl.textContent = m + ":" + s;
     }, 1000);
   }
-  function stopTimer() { clearInterval(timerInterval); timerInterval = null; }
+  function stopTimer() { 
+    clearInterval(timerInterval); 
+    timerInterval = null;
+    timerSeconds = 0;
+    timerEl.textContent = "00:00";
+  }
   function formatDuration(s) {
     const m = String(Math.floor(s / 60)).padStart(2, "0");
     const sc = String(s % 60).padStart(2, "0");
@@ -185,21 +195,42 @@
     transcriptContainer.appendChild(line);
     transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
 
-    translateText(enText, zhP);
+    // Add to queue instead of immediate translation
+    translationQueue.push({ text: enText, element: zhP });
+    processTranslationQueue();
   }
 
   function updateLastTranscript(text) {
-    // Only update interim if needed, but we hide English so we just update the translation target
-    // For simplicity, we keep the "翻译中..." until the final translation arrives
+    // For interim results, we don't update the UI immediately to avoid flickering
+    // The final result will trigger the translation queue
+  }
+
+  async function processTranslationQueue() {
+    if (isProcessingQueue || translationQueue.length === 0) return;
+    isProcessingQueue = true;
+
+    const cfg = getConfig();
+    if (!cfg) {
+      // If no config, clear the queue and mark all as unavailable
+      while (translationQueue.length > 0) {
+        const item = translationQueue.shift();
+        item.element.textContent = "[未配置 API]";
+        item.element.classList.remove("loading-zh");
+      }
+      isProcessingQueue = false;
+      return;
+    }
+
+    // Process all items in the queue
+    const promises = translationQueue.map(item => translateText(item.text, item.element));
+    await Promise.all(promises);
+    
+    translationQueue = [];
+    isProcessingQueue = false;
   }
 
   async function translateText(enText, targetEl) {
     const cfg = getConfig();
-    if (!cfg) {
-      targetEl.textContent = "[未配置 API]";
-      targetEl.classList.remove("loading-zh");
-      return;
-    }
     try {
       let translated = "";
       if (cfg.useCustomTranslate) {
@@ -272,8 +303,9 @@
     statusIndicator.textContent = "已停止";
     statusIndicator.className = "status-dot inactive";
     stopTimer();
-    timerSeconds = 0;
-    timerEl.textContent = "00:00";
+    
+    // Ensure any remaining queued translations are processed
+    processTranslationQueue();
   }
 
   function onRecordingStopped() {
@@ -334,6 +366,7 @@
   clearTextBtn.addEventListener("click", () => {
     fullTranscript = "";
     transcriptContainer.innerHTML = '<p class="placeholder">录音开始后，此处将实时显示中文翻译字幕...</p>';
+    translationQueue = []; // Clear translation queue as well
   });
 
   // --- File Analysis ---
@@ -401,4 +434,3 @@
   renderRecordings();
   showSetup();
 })();
-
